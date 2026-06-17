@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap, Tabs, Table, Row, Cell},
     Frame,
 };
 
@@ -11,7 +11,11 @@ use crate::app::App;
 pub fn draw(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
+        .constraints([
+            Constraint::Length(3), // Title
+            Constraint::Length(3), // Tabs
+            Constraint::Min(0),    // Content
+        ].as_ref())
         .split(f.area());
 
     // Title / Stats
@@ -24,18 +28,92 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
 
-    // Main layout
-    let main_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)].as_ref())
-        .split(chunks[1]);
+    // Tabs
+    let titles = vec![
+        Line::from(" 1. Seguridad (Alertas & Tráfico) "),
+        Line::from(" 2. Perfilador de Actividad (Hosts) ")
+    ];
+    let tabs = Tabs::new(titles)
+        .block(Block::default().borders(Borders::ALL))
+        .select(app.active_tab)
+        .style(Style::default().fg(Color::Gray))
+        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    f.render_widget(tabs, chunks[1]);
 
-    draw_packets(f, app, main_chunks[0]);
-    draw_alerts(f, app, main_chunks[1]);
+    if app.active_tab == 0 {
+        // Main layout
+        let main_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)].as_ref())
+            .split(chunks[2]);
 
-    if app.show_pedagogy {
-        draw_pedagogy_popup(f, app);
+        draw_packets(f, app, main_chunks[0]);
+        draw_alerts(f, app, main_chunks[1]);
+
+        if app.show_pedagogy {
+            draw_pedagogy_popup(f, app);
+        }
+    } else {
+        draw_profiler(f, app, chunks[2]);
     }
+}
+
+fn draw_profiler(f: &mut Frame, app: &App, area: Rect) {
+    let mut local_ips: Vec<_> = app.profiler.hosts.keys().collect();
+    local_ips.sort();
+
+    let mut rows = Vec::new();
+    
+    for ip in local_ips {
+        let conns = &app.profiler.hosts[ip];
+        
+        rows.push(Row::new(vec![
+            Cell::from(ip.clone()).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Cell::from(format!("{} conexiones", conns.len())),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+        ]));
+        
+        let mut sorted_conns: Vec<_> = conns.values().collect();
+        sorted_conns.sort_by(|a, b| b.bytes_transferred.cmp(&a.bytes_transferred));
+        
+        for (i, conn) in sorted_conns.iter().enumerate() {
+            if i >= 15 { // Top 15 connections per IP
+                break;
+            }
+            
+            let mb = conn.bytes_transferred as f64 / 1024.0 / 1024.0;
+            let target_display = if let Some(domain) = &conn.target_domain {
+                format!("{} ({})", domain, conn.target_ip)
+            } else {
+                conn.target_ip.clone()
+            };
+            let proto_display = format!("{}/{}", conn.protocol, conn.port);
+
+            rows.push(Row::new(vec![
+                Cell::from("  └─"),
+                Cell::from(target_display),
+                Cell::from(proto_display),
+                Cell::from(conn.category.clone()).style(Style::default().fg(Color::Green)),
+                Cell::from(format!("{:.2} MB", mb)),
+            ]));
+        }
+    }
+
+    let table = Table::new(rows, [
+        Constraint::Percentage(15),
+        Constraint::Percentage(40),
+        Constraint::Percentage(10),
+        Constraint::Percentage(20),
+        Constraint::Percentage(15),
+    ])
+    .header(Row::new(vec!["IP Local", "Destino", "Puerto", "Actividad", "Tráfico"])
+        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .bottom_margin(1))
+    .block(Block::default().title(" Perfilador de Tráfico de Red Local (DPI) ").borders(Borders::ALL));
+
+    f.render_widget(table, area);
 }
 
 fn draw_packets(f: &mut Frame, app: &App, area: Rect) {

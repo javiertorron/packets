@@ -72,7 +72,7 @@ impl Profiler {
 
                     // DNS Snooping (Intercept DNS responses)
                     if udp.source_port() == 53 {
-                        if let Ok(dns_packet) = DnsPacket::parse(sliced.payload) {
+                        if let Ok(dns_packet) = DnsPacket::parse(udp.payload()) {
                             for answer in dns_packet.answers {
                                 match answer.data {
                                     dns_parser::rdata::RData::A(rdata) => {
